@@ -1,21 +1,67 @@
-import { Client, GatewayIntentBits, VoiceState, ChannelType, PermissionsBitField, GuildMember, Collection } from 'discord.js';
+import {
+    Client, GatewayIntentBits, VoiceState, ChannelType,
+    PermissionsBitField, GuildMember, Collection,
+    SlashCommandBuilder, REST, Routes,
+    ChatInputCommandInteraction,
+    MessageFlags
+} from 'discord.js';
 import * as dotenv from 'dotenv';
-import {CreatedRoom} from "./types/config";
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
+// ---------- Конфигурация (храним в файле config.json) ----------
+interface BotSettings {
+    createRoomChannelId: string | null;
+}
+
+const CONFIG_FILE = path.join(__dirname, '..', 'config.json'); // на уровень выше src
+
+function loadSettings(): BotSettings {
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            const data = fs.readFileSync(CONFIG_FILE, 'utf-8');
+            return JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки config.json:', error);
+    }
+    return { createRoomChannelId: null };
+}
+
+function saveSettings(settings: BotSettings): void {
+    try {
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    } catch (error) {
+        console.error('Ошибка сохранения config.json:', error);
+    }
+}
+
+function setDefaultChannel(channelId: string | null): void {
+    const settings = loadSettings();
+    settings.createRoomChannelId = channelId;
+    saveSettings(settings);
+}
+
+function getDefaultChannel(): string | null {
+    return loadSettings().createRoomChannelId;
+}
+
+// ---------- Класс бота ----------
+interface CreatedRoom {
+    channelId: string;
+    ownerId: string;
+    createdAt: Date;
+}
 
 class RoomBot {
     private client: Client;
     private createdRooms: Map<string, CreatedRoom> = new Map();
-    private pendingCreations: Set<string> = new Set(); // Хранит ID пользователей, для которых уже создаётся комната
-    private readonly CREATE_ROOM_CHANNEL_ID;
+    private pendingCreations: Set<string> = new Set();
+    private createRoomChannelId: string | null = null;
 
     constructor() {
-        // Получаем ID канала-триггера из .env
-        this.CREATE_ROOM_CHANNEL_ID = process.env.CREATE_ROOM_CHANNEL_ID;
-
-        // Инициализируем клиент Discord с нужными интентами
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
@@ -29,22 +75,30 @@ class RoomBot {
     }
 
     private setupEventListeners(): void {
-        this.client.once('ready', () => {
+        this.client.once('ready', async () => {
             console.log(`✅ Бот ${this.client.user?.tag} запущен!`);
-            console.log(`📢 Канал для создания комнат: ${this.CREATE_ROOM_CHANNEL_ID}`);
+            // Загружаем сохранённый канал
+            this.createRoomChannelId = getDefaultChannel();
+            if (this.createRoomChannelId) {
+                console.log(`📢 Канал для создания комнат: ${this.createRoomChannelId}`);
+            } else {
+                console.warn('⚠️ Канал для создания комнат не задан. Используйте /set_default_channel');
+            }
+            // Регистрируем слэш-команды на сервере
+            await this.registerCommands();
         });
 
         this.client.on('voiceStateUpdate', (oldState: VoiceState, newState: VoiceState) => {
-            // Игнорируем, если ID канала не изменился
             if (oldState.channelId === newState.channelId) return;
-
-            // Пользователь зашёл в какой-то канал (или переключился)
             if (newState.channelId) {
                 this.handlePotentialRoomCreation(newState);
             }
-
-            // Проверка на опустение канала (старый код)
             this.checkAndCleanEmptyRooms(oldState);
+        });
+
+        this.client.on('interactionCreate', async (interaction) => {
+            if (!interaction.isChatInputCommand()) return;
+            await this.handleCommand(interaction as ChatInputCommandInteraction);
         });
 
         this.client.on('error', (error: Error) => {
@@ -58,14 +112,79 @@ class RoomBot {
         });
     }
 
+    // Регистрация команд через REST API
+    private async registerCommands(): Promise<void> {
+        const guildId = process.env.GUILD_ID;
+        const token = process.env.DISCORD_TOKEN;
+        const clientId = process.env.CLIENT_ID;
+
+        if (!guildId || !token || !clientId) {
+            console.warn('⚠️ GUILD_ID, DISCORD_TOKEN или CLIENT_ID не указаны в .env. Команды не зарегистрированы.');
+            return;
+        }
+
+        const commands = [
+            new SlashCommandBuilder()
+                .setName('set_default_channel')
+                .setDescription('Установить голосовой канал, при заходе в который будут создаваться приватные комнаты')
+                .addChannelOption(option =>
+                    option.setName('channel')
+                        .setDescription('Голосовой канал')
+                        .setRequired(true)
+                        .addChannelTypes(ChannelType.GuildVoice)
+                ),
+            new SlashCommandBuilder()
+                .setName('get_default_channel')
+                .setDescription('Показать текущий канал для создания комнат')
+        ].map(cmd => cmd.toJSON());
+
+        const rest = new REST({ version: '10' }).setToken(token);
+
+        try {
+            console.log('🔄 Регистрация слэш-команд...');
+            await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+            console.log('✅ Слэш-команды зарегистрированы!');
+        } catch (error) {
+            console.error('❌ Ошибка регистрации команд:', error);
+        }
+    }
+
+    private async handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+        const commandName = interaction.commandName;
+
+        if (commandName === 'set_default_channel') {
+            const channel = interaction.options.get('channel')?.channel;
+            if (!channel || channel.type !== ChannelType.GuildVoice) {
+                await interaction.reply({ content: '❌ Пожалуйста, выберите голосовой канал.', flags: MessageFlags.Ephemeral });
+                return;
+            }
+            setDefaultChannel(channel.id);
+            this.createRoomChannelId = channel.id;
+            await interaction.reply({
+                content: `✅ Теперь **${channel.name}** будет использоваться как канал для создания приватных комнат.`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+        else if (commandName === 'get_default_channel') {
+            const channelId = getDefaultChannel();
+            if (!channelId) {
+                await interaction.reply('ℹ️ Канал для создания комнат не установлен. Используйте `/set_default_channel`.');
+                return;
+            }
+            const channel = interaction.guild?.channels.cache.get(channelId);
+            if (channel) {
+                await interaction.reply(`🎤 Текущий канал-родитель: **${channel.name}** (ID: ${channelId})`);
+            } else {
+                await interaction.reply(`⚠️ Канал с ID ${channelId} не найден на сервере. Возможно, он был удалён. Установите новый канал командой /set_default_channel.`);
+            }
+        }
+    }
+
     private async handlePotentialRoomCreation(voiceState: VoiceState): Promise<void> {
         const channel = voiceState.channel;
         const member = voiceState.member;
 
-        // Проверяем, что пользователь зашёл именно в канал "Create Room"
-        if (!channel || !member || channel.id !== this.CREATE_ROOM_CHANNEL_ID) return;
-
-        // Защита от дублирования
+        if (!channel || !member || channel.id !== this.createRoomChannelId) return;
         if (this.pendingCreations.has(member.id)) {
             console.log(`⚠️ Создание комнаты для ${member.user.tag} уже выполняется, пропускаем`);
             return;
@@ -79,7 +198,6 @@ class RoomBot {
             const dmChannel = await member.createDM();
             await dmChannel.send('❌ Произошла ошибка при создании вашей комнаты. Обратитесь к администраторам.');
         } finally {
-            // Снимаем блокировку через 5 секунд (на случай, если событие придёт повторно)
             setTimeout(() => this.pendingCreations.delete(member.id), 5000);
         }
     }
@@ -87,27 +205,22 @@ class RoomBot {
     private async createPrivateRoom(member: any, triggerChannel: any): Promise<void> {
         const guild = triggerChannel.guild;
         const memberName = member.nickname || member.user.username;
-
-        // Создаем уникальное название канала
         const channelName = this.setChannelName(memberName);
-
-        // Получаем категорию из канала-триггера
         const parentCategory = triggerChannel.parent;
 
         console.log(`🛠️ Создание комнаты для ${memberName} (${member.id})`);
 
-        // Создаем новый голосовой канал
         const newChannel = await guild.channels.create({
             name: channelName,
             type: ChannelType.GuildVoice,
             parent: parentCategory ? parentCategory.id : null,
             permissionOverwrites: [
                 {
-                    id: guild.id, // @everyone
+                    id: guild.id,
                     deny: [PermissionsBitField.Flags.Connect]
                 },
                 {
-                    id: member.id, // Владелец комнаты
+                    id: member.id,
                     allow: [
                         PermissionsBitField.Flags.Connect,
                         PermissionsBitField.Flags.ManageChannels,
@@ -117,10 +230,8 @@ class RoomBot {
             ]
         });
 
-        // Перемещаем пользователя в созданный канал
         await member.voice.setChannel(newChannel);
 
-        // Сохраняем информацию о комнате
         this.createdRooms.set(newChannel.id, {
             channelId: newChannel.id,
             ownerId: member.id,
@@ -128,35 +239,16 @@ class RoomBot {
         });
 
         console.log(`✅ Комната "${channelName}" создана (ID: ${newChannel.id})`);
-
-       /* // Отправляем сообщение в ЛС
-       try {
-            const dmChannel = await member.createDM();
-            await dmChannel.send(
-                `🎉 Ваша приватная комната **"${channelName}"** создана!\n` +
-                `🔗 Пригласить друзей: \`Кликните ПКМ по каналу → Скопировать приглашение\`\n` +
-                `⚙️ Управление: Настройте права доступа через \`Настройки канала\`\n` +
-                `🗑️ Комната автоматически удалится, когда все выйдут из нее.`
-            );
-        } catch (dmError) {
-            console.log('⚠️ Не удалось отправить ЛС пользователю');
-        }
-        */
     }
 
     private async checkAndCleanEmptyRooms(oldState: VoiceState): Promise<void> {
         const leftChannel = oldState.channel;
-
         if (!leftChannel || leftChannel.type !== ChannelType.GuildVoice) return;
 
-        // Проверяем, является ли это созданной нами комнатой
         const roomInfo = this.createdRooms.get(leftChannel.id);
         if (!roomInfo) return;
 
-        // Проверяем, пуст ли канал (исключая самого бота)
-        // Приводим members к Collection, так как мы точно знаем тип канала
         const members = (leftChannel.members as Collection<string, GuildMember>).filter(member => !member.user.bot);
-
         if (members.size === 0) {
             setTimeout(async () => {
                 try {
@@ -173,21 +265,15 @@ class RoomBot {
         }
     }
 
-
     private setChannelName(name: string): string {
+        // Задаем название канала
         return name
     }
 
     public async start(): Promise<void> {
         const token = process.env.DISCORD_TOKEN;
-
         if (!token) {
             console.error('❌ Токен бота не найден! Проверьте файл .env');
-            process.exit(1);
-        }
-
-        if (!this.CREATE_ROOM_CHANNEL_ID) {
-            console.error('❌ ID канала Create Room не найден! Проверьте файл .env');
             process.exit(1);
         }
 
@@ -200,6 +286,5 @@ class RoomBot {
     }
 }
 
-// Запуск бота
 const bot = new RoomBot();
 bot.start();
