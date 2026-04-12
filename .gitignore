@@ -1,14 +1,44 @@
 /tmp
 /out-tsc
 
+/.pnp
+.pnp.js
+
+
+# Зависимости
+node_modules/
 /node_modules
+
+# Сборка TypeScript
+dist/
+build/
+
+# Файлы окружения и конфигурации с секретами
+.env
+.env.local
+.env.*.local
+
+# Локальные файлы состояния бота
+config.json       # Хранит ID канала-триггера
+rooms.json        # База созданных комнат
+# Логи
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-/.pnp
-.pnp.js
-dist/
-.env
+pm2-*.log
+
+# Системные файлы
 .DS_Store
-*.log
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 .vscode/*
+
+# Временные файлы
+*.tmp
+*.temp
