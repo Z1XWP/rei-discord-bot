@@ -38,6 +38,9 @@ Thumbs.db
 *.swp
 *.swo
 .vscode/*
+*.iml
+*.iws
+*.ipr
 
 # Временные файлы
 *.tmp
