@@ -1,20 +1,6 @@
-export interface BotConfig {
-    token: string;
-    clientId: string;
-    guildId: string;
-    createRoomChannelId: string;
-}
-
-export interface RoomData {
-    channelId: string;
-    ownerId: string;
-    ownerName: string;
-    createdAt: Date;
-    members: string[];
-}
-
-export interface CreatedRoom {
+export interface CreatedRoomData {
     channelId: string;
     ownerId: string;
     createdAt: Date;
+    afterRestart: boolean;
 }
