@@ -1,18 +1,24 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { IRoomStorage } from './IRoomStorage';
-import { CreatedRoomData } from '../types/config';
+import { CreatedRoomData } from './types';
 
-const ROOMS_FILE = path.join(process.cwd(), 'rooms.json');
+export interface IRoomStorage {
+    load(): Promise<Map<string, CreatedRoomData>>;
+    save(rooms: Map<string, CreatedRoomData>): Promise<void>;
+    add(room: CreatedRoomData): Promise<void>;
+    delete(channelId: string): Promise<void>;
+}
 
 export class JsonFileStorage implements IRoomStorage {
+    private readonly filePath = path.join(process.cwd(), 'rooms.json');
+
     async load(): Promise<Map<string, CreatedRoomData>> {
         try {
-            const data = await fs.readFile(ROOMS_FILE, 'utf-8');
+            const data = await fs.readFile(this.filePath, 'utf-8');
             const parsed = JSON.parse(data);
             const rooms = new Map<string, CreatedRoomData>();
             for (const [id, room] of Object.entries(parsed)) {
-                const r = room as any;
+                const r = room as CreatedRoomData;
                 rooms.set(id, {
                     channelId: r.channelId,
                     ownerId: r.ownerId,
@@ -30,7 +36,7 @@ export class JsonFileStorage implements IRoomStorage {
 
     async save(rooms: Map<string, CreatedRoomData>): Promise<void> {
         const data = Object.fromEntries(rooms);
-        await fs.writeFile(ROOMS_FILE, JSON.stringify(data, null, 2));
+        await fs.writeFile(this.filePath, JSON.stringify(data, null, 2));
     }
 
     async add(room: CreatedRoomData): Promise<void> {
