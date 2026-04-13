@@ -19,6 +19,7 @@ import path from 'path';
 import {CreatedRoomData} from "./types/config";
 import {IRoomStorage} from "./storage/IRoomStorage";
 import {JsonFileStorage} from "./storage/JsonFileStorage";
+import {addExceptionRole, loadExceptionRoles, removeExceptionRole} from "./utils/roles-controler";
 
 dotenv.config();
 
@@ -152,7 +153,7 @@ class RoomBot {
         const commands = [
             new SlashCommandBuilder()
                 .setName('set_default_channel')
-                .setDescription('Установить голосовой канал, при заходе в который будут создаваться приватные комнаты')
+                .setDescription('Установить голосовой канал, для созданиях приватных комнат')
                 .addChannelOption(option =>
                     option.setName('channel')
                         .setDescription('Голосовой канал')
@@ -161,7 +162,23 @@ class RoomBot {
                 ),
             new SlashCommandBuilder()
                 .setName('get_default_channel')
-                .setDescription('Показать текущий канал для создания комнат')
+                .setDescription('Показать текущий канал для создания приватных комнат'),
+            new SlashCommandBuilder()
+                .setName('add_exception_role')
+                .setDescription('Добавить роль в список исключений')
+                .addRoleOption(option =>
+                    option.setName('role').setDescription('Роль').setRequired(true)),
+            new SlashCommandBuilder()
+                .setName('remove_exception_role')
+                .setDescription('Удалить роль из списка исключений')
+                .addRoleOption(option =>
+                    option.setName('role').setDescription('Роль').setRequired(true)),
+            new SlashCommandBuilder()
+                .setName('get_exception_roles')
+                .setDescription('Показать список ролей, находящихся в исключениях'),
+            new SlashCommandBuilder()
+                .setName('update_active_channels_access')
+                .setDescription('Обновить права во всех активных комнатах для ролей из исключений')
         ].map(cmd => cmd.toJSON());
 
         const rest = new REST({ version: '10' }).setToken(token);
@@ -181,28 +198,147 @@ class RoomBot {
         if (commandName === 'set_default_channel') {
             const channel = interaction.options.get('channel')?.channel;
             if (!channel || channel.type !== ChannelType.GuildVoice) {
-                await interaction.reply({ content: '❌ Пожалуйста, выберите голосовой канал.', flags: MessageFlags.Ephemeral });
+                await interaction.reply(
+                    {
+                        content: '❌ Пожалуйста, выберите голосовой канал.',
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
                 return;
             }
             setDefaultChannel(channel.id);
             this.createRoomChannelId = channel.id;
-            await interaction.reply({
-                content: `✅ Теперь **${channel.name}** будет использоваться как канал для создания приватных комнат.`,
-                flags: MessageFlags.Ephemeral
-            });
+            await interaction.reply(
+                {
+                    content: `✅ Теперь **${channel.name}** будет использоваться как канал для создания приватных комнат.`,
+                    flags: MessageFlags.Ephemeral
+                }
+            );
         }
         else if (commandName === 'get_default_channel') {
             const channelId = getDefaultChannel();
             if (!channelId) {
-                await interaction.reply('ℹ️ Канал для создания комнат не установлен. Используйте `/set_default_channel`.');
+                await interaction.reply(
+                    'ℹ️ Канал для создания комнат не установлен. Используйте `/set_default_channel`.'
+                );
                 return;
             }
             const channel = interaction.guild?.channels.cache.get(channelId);
             if (channel) {
-                await interaction.reply(`🎤 Текущий канал-родитель: **${channel.name}** (ID: ${channelId})`);
+                await interaction.reply(
+                    `🎤 Текущий канал для создания комнат: **${channel.name}** (ID: ${channelId})`
+                );
             } else {
-                await interaction.reply(`⚠️ Канал с ID ${channelId} не найден на сервере. Возможно, он был удалён. Установите новый канал командой /set_default_channel.`);
+                await interaction.reply(
+                    `⚠️ Канал с ID ${channelId} не найден на сервере. Возможно, он был удалён. Установите новый канал командой /set_default_channel.`
+                );
             }
+        }
+        else if (commandName === 'add_exception_role') {
+            const role = interaction.options.getRole('role');
+            if (!role) {
+                await interaction.reply(
+                    {
+                        content: '❌ Роль не найдена.',
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+                return;
+            }
+            const added = addExceptionRole(role.id);
+            if (added) {
+                await interaction.reply(
+                    {
+                        content: `✅ Роль **${role.name}** добавлена в исключения.`,
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+            } else {
+                await interaction.reply(
+                    {
+                        content: `⚠️ Роль **${role.name}** уже есть в исключениях.`,
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+            }
+        }
+        else if (commandName === 'remove_exception_role') {
+            const role = interaction.options.getRole('role');
+            if (!role) {
+                await interaction.reply(
+                    {
+                        content: '❌ Роль не найдена.',
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+                return;
+            }
+            const removed = removeExceptionRole(role.id);
+            if (removed) {
+                await interaction.reply(
+                    {
+                        content: `✅ Роль **${role.name}** удалена из исключений.`,
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+            } else {
+                await interaction.reply(
+                    {
+                        content: `⚠️ Роль **${role.name}** не найдена в исключениях.`,
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+            }
+        }
+        else if (commandName === 'get_exception_roles') {
+            const roles = loadExceptionRoles();
+            if (roles.length === 0) {
+                await interaction.reply(
+                    {
+                        content: 'ℹ️ Список разрешённых ролей пуст. В комнату может попасть только владелец и настроить ее.',
+                        flags: MessageFlags.Ephemeral
+                    }
+                );
+                return;
+            }
+            const roleMentions = roles.map(id => `<@&${id}>`).join(', ');
+            await interaction.reply(
+                {
+                    content: `🎭 **Разрешённые роли:**\n${roleMentions}`,
+                    flags: MessageFlags.Ephemeral
+                }
+            );
+        }
+        else if (commandName === 'update_active_channels_access') {
+            await interaction.reply(
+                {
+                    content: '🔄 Обновляю права в комнатах...',
+                    flags: MessageFlags.Ephemeral
+                }
+            );
+            let updated = 0;
+            for (const [channelId, roomData] of this.createdRooms) {
+                const channel = interaction.guild?.channels.cache.get(channelId) as VoiceBasedChannel | undefined;
+                if (channel && channel.isVoiceBased()) {
+                    try {
+                        // Пересоздаем все разрешения заново
+                        const exceptionRoles = loadExceptionRoles();
+                        await channel.permissionOverwrites.set([
+                            { id: interaction.guildId!, deny: [PermissionsBitField.Flags.Connect] },
+                            { id: roomData.ownerId, allow: [PermissionsBitField.Flags.Connect, PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.MoveMembers] },
+                            ...exceptionRoles.map(roleId => ({ id: roleId, allow: [PermissionsBitField.Flags.Connect] }))
+                        ]);
+                        updated++;
+                    } catch (error) {
+                        console.error(`Ошибка обновления прав в канале ${channel.name}:`, error);
+                    }
+                }
+            }
+            await interaction.editReply(
+                {
+                    content: `✅ Обновлены права в ${updated} комнатах.`
+                }
+            );
         }
     }
 
@@ -233,6 +369,11 @@ class RoomBot {
         const memberName = member.nickname || member.user.username;
         const channelName = this.setChannelName(memberName);
         const parentCategory = triggerChannel.parent;
+        const exceptionRoles = loadExceptionRoles();
+        const roleOverwrites = exceptionRoles.map(roleId => ({
+            id: roleId,
+            allow: [PermissionsBitField.Flags.Connect]
+        }));
 
         console.log(`🛠️ Создание комнаты для ${memberName} (${member.id})`);
 
@@ -252,7 +393,8 @@ class RoomBot {
                         PermissionsBitField.Flags.ManageChannels,
                         PermissionsBitField.Flags.MoveMembers
                     ]
-                }
+                },
+                ...roleOverwrites
             ]
         });
 
