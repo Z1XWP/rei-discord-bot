@@ -19,8 +19,9 @@ build/
 .env.*.local
 
 # Локальные файлы состояния бота
-config.json       # Хранит ID канала-триггера
-rooms.json        # База созданных комнат
+config.json
+rooms.json
+exception-roles.json
 # Логи
 *.log
 npm-debug.log*
