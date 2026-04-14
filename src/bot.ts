@@ -180,6 +180,11 @@ export class RoomBot {
 
         console.log(`🛠️ Создание комнаты для ${memberName} (${member.id}) на сервере ${guild.name}`);
 
+        const botId = this.client.user?.id;
+        if (!botId) {
+            throw new Error('Bot user is not ready');
+        }
+
         const newChannel = await guild.channels.create({
             name: channelName,
             type: ChannelType.GuildVoice,
@@ -195,6 +200,14 @@ export class RoomBot {
                         PermissionsBitField.Flags.Connect,
                         PermissionsBitField.Flags.ManageChannels,
                         PermissionsBitField.Flags.MoveMembers
+                    ]
+                },
+                {
+                    id: botId,
+                    allow: [
+                        PermissionsBitField.Flags.Connect,
+                        PermissionsBitField.Flags.MoveMembers,
+                        PermissionsBitField.Flags.ManageChannels
                     ]
                 },
                 ...roleOverwrites

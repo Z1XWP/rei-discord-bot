@@ -82,7 +82,7 @@ export async function handleCommand(bot: RoomBot, interaction: ChatInputCommandI
     }
 }
 
-// ----- Реализации команд (с учётом guildId) -----
+// ----- Реализации команд -----
 async function handleSetDefaultChannel(bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
     const guildId = interaction.guildId;
     if (!guildId) {
