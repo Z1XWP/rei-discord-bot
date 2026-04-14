@@ -1,8 +1,5 @@
-export interface BotSettings {
-    createRoomChannelId: string | null;
-}
-
 export interface CreatedRoomData {
+    guildId: string;
     channelId: string;
     ownerId: string;
     createdAt: Date;

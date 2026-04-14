@@ -1,42 +1,46 @@
 import { VoiceState, Interaction } from 'discord.js';
 import { RoomBot } from './bot';
 import { registerCommands, handleCommand } from './commands';
-import { getDefaultChannel } from './utils';
 
 export function setupEvents(bot: RoomBot): void {
     const client = bot.getClient();
-    client.once('ready', async () => await onReady(bot));
-    client.on('voiceStateUpdate', async (oldState, newState) => await onVoiceStateUpdate(bot, oldState, newState));
-    client.on('interactionCreate', async (interaction) => await onInteractionCreate(bot, interaction));
+    client.once('clientReady', async () =>
+        await onReady(bot));
+    client.on('voiceStateUpdate', async (oldState, newState) =>
+        await onVoiceStateUpdate(bot, oldState, newState));
+    client.on('interactionCreate', async (interaction) =>
+        await onInteractionCreate(bot, interaction));
     client.on('error', onError);
 }
 
 async function onReady(bot: RoomBot): Promise<void> {
     const client = bot.getClient();
     console.log(`✅ Бот ${client.user?.tag} запущен!`);
-    const channelId = getDefaultChannel();
-    bot.setCreateRoomChannelId(channelId);
-    await bot.loadRoomsFromStorage();
-    await bot.restoreCreatedRooms();
-    if (channelId) {
-        const guild = client.guilds.cache.first();
-        if (guild) {
+
+    // Загружаем данные для каждой гильдии, где есть бот
+    for (const guild of client.guilds.cache.values()) {
+        await bot.loadGuildData(guild.id);
+        await bot.restoreCreatedRooms(guild.id);
+        const triggerId = await bot.getTriggerChannelId(guild.id);
+        if (triggerId) {
             try {
-                const trigger = await guild.channels.fetch(channelId);
-                if (trigger?.isVoiceBased()){
-                    console.log(`📢 Канал-триггер: ${trigger.name}`);
-                }
-                else {
-                    console.log('Выбранный канал не является голосовым каналом');
+                const trigger = await guild.channels.fetch(triggerId);
+                if (trigger?.isVoiceBased()) {
+                    console.log(`📢 [${guild.name}] Канал-триггер: ${trigger.name}`);
+                } else {
+                    console.log(`⚠️ [${guild.name}] Канал-триггер не является голосовым.`);
+                    await bot.setTriggerChannelId(guild.id, null);
                 }
             } catch {
-                console.warn(`⚠️ Канал ${channelId} не найден. Комнаты не будут создаваться.`);
-                bot.setCreateRoomChannelId(null);
+                console.warn(`⚠️ [${guild.name}] Канал ${triggerId} не найден. Комнаты не будут создаваться.`);
+                await bot.setTriggerChannelId(guild.id, null);
             }
+        } else {
+            console.log(`ℹ️ [${guild.name}] Канал-триггер не задан. Используйте /set_default_channel`);
         }
-    } else {
-        console.warn('⚠️ Канал-триггер не задан. Используйте /set_default_channel');
     }
+
+    // Регистрируем глобальные команды
     await registerCommands();
 }
 

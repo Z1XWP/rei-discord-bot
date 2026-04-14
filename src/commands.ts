@@ -8,16 +8,9 @@ import {
     VoiceBasedChannel
 } from 'discord.js';
 import { RoomBot } from './bot';
-import {
-    setDefaultChannel,
-    getDefaultChannel,
-    loadExceptionRoles,
-    addExceptionRole,
-    removeExceptionRole,
-    replyEphemeral
-} from './utils';
+import { addExceptionRole, removeExceptionRole, getExceptionRoles } from './db';
+import { replyEphemeral } from './utils';
 
-// ----- Мапа команд -----
 type CommandHandler = (bot: RoomBot, interaction: ChatInputCommandInteraction) => Promise<void>;
 
 const commandHandlers = new Map<string, CommandHandler>([
@@ -29,15 +22,17 @@ const commandHandlers = new Map<string, CommandHandler>([
     ['update_active_channels_access', handleUpdateActiveChannelsAccess],
 ]);
 
-// ----- Регистрация команд в Discord -----
+/**
+ * Регистрация глобальных команд (для всех серверов, где есть бот).
+ */
 export async function registerCommands(): Promise<void> {
-    const guildId = process.env.GUILD_ID;
     const token = process.env.DISCORD_TOKEN;
     const clientId = process.env.CLIENT_ID;
-    if (!guildId || !token || !clientId) {
-        console.warn('⚠️ GUILD_ID, DISCORD_TOKEN или CLIENT_ID не указаны в .env');
+    if (!token || !clientId) {
+        console.warn('⚠️ DISCORD_TOKEN или CLIENT_ID не указаны в .env. Команды не зарегистрированы.');
         return;
     }
+
     const commandsData = [
         new SlashCommandBuilder()
             .setName('set_default_channel')
@@ -71,38 +66,45 @@ export async function registerCommands(): Promise<void> {
     const rest = new REST({ version: '10' }).setToken(token);
     try {
         console.log('🔄 Регистрация слэш-команд...');
-        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commandsData });
+        await rest.put(Routes.applicationCommands(clientId), { body: commandsData });
         console.log('✅ Слэш-команды зарегистрированы!');
     } catch (error) {
         console.error('❌ Ошибка регистрации команд:', error);
     }
 }
 
-// ----- Обработчик входящей команды (вызывается из events.ts) -----
 export async function handleCommand(bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
     const handler = commandHandlers.get(interaction.commandName);
     if (handler) {
         await handler(bot, interaction);
-    }
-    else {
-        console.warn(`Неизвестная команда: ${interaction.commandName}`);
+    } else {
+        console.warn(`❌ Неизвестная команда: ${interaction.commandName}`);
     }
 }
 
-// ----- Реализации команд -----
+// ----- Реализации команд (с учётом guildId) -----
 async function handleSetDefaultChannel(bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
     const channel = interaction.options.get('channel')?.channel;
     if (!channel || channel.type !== ChannelType.GuildVoice) {
         await replyEphemeral(interaction, '❌ Выберите голосовой канал.');
         return;
     }
-    setDefaultChannel(channel.id);
-    bot.setCreateRoomChannelId(channel.id);
-    await replyEphemeral(interaction, `✅ Теперь **${channel.name}** — канал для создания комнат.`);
+    await bot.setTriggerChannelId(guildId, channel.id);
+    await replyEphemeral(interaction, `✅ Теперь **${channel.name}** — канал для создания комнат на этом сервере.`);
 }
 
 async function handleGetDefaultChannel(_bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
-    const channelId = getDefaultChannel();
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
+    const channelId = await _bot.getTriggerChannelId(guildId);
     if (!channelId) {
         await interaction.reply('ℹ️ Канал не установлен. Используйте `/set_default_channel`.');
         return;
@@ -110,34 +112,48 @@ async function handleGetDefaultChannel(_bot: RoomBot, interaction: ChatInputComm
     const channel = interaction.guild?.channels.cache.get(channelId);
     if (channel) {
         await interaction.reply(`🎤 Текущий канал: **${channel.name}**`);
-    }
-    else {
+    } else {
         await interaction.reply(`⚠️ Канал с ID ${channelId} не найден. Установите новый.`);
     }
 }
 
 async function handleAddExceptionRole(_bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
     const role = interaction.options.getRole('role');
     if (!role) {
         await replyEphemeral(interaction, '❌ Роль не найдена.');
         return;
     }
-    const added = addExceptionRole(role.id);
+    const added = await addExceptionRole(guildId, role.id);
     await replyEphemeral(interaction, added ? `✅ Роль **${role.name}** добавлена.` : `⚠️ Роль уже в списке.`);
 }
 
 async function handleRemoveExceptionRole(_bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
     const role = interaction.options.getRole('role');
     if (!role) {
         await replyEphemeral(interaction, '❌ Роль не найдена.');
         return;
     }
-    const removed = removeExceptionRole(role.id);
+    const removed = await removeExceptionRole(guildId, role.id);
     await replyEphemeral(interaction, removed ? `✅ Роль **${role.name}** удалена.` : `⚠️ Роль не найдена в списке.`);
 }
 
 async function handleGetExceptionRoles(_bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
-    const roles = loadExceptionRoles();
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
+    const roles = await getExceptionRoles(guildId);
     if (roles.length === 0) {
         await replyEphemeral(interaction, 'ℹ️ Список ролей-исключений пуст.');
         return;
@@ -147,11 +163,16 @@ async function handleGetExceptionRoles(_bot: RoomBot, interaction: ChatInputComm
 }
 
 async function handleUpdateActiveChannelsAccess(bot: RoomBot, interaction: ChatInputCommandInteraction): Promise<void> {
+    const guildId = interaction.guildId;
+    if (!guildId) {
+        await interaction.reply('❌ Команда доступна только на сервере.');
+        return;
+    }
     await replyEphemeral(interaction, '🔄 Обновляю права в комнатах...');
     let updated = 0;
-    const exceptionRoles = loadExceptionRoles();
-    const guildId = interaction.guildId!;
-    for (const [channelId, roomData] of bot.getCreatedRooms()) {
+    const exceptionRoles = await getExceptionRoles(guildId);
+    const rooms = bot.getCreatedRooms(guildId);
+    for (const [channelId, roomData] of rooms) {
         const channel = interaction.guild?.channels.cache.get(channelId) as VoiceBasedChannel | undefined;
         if (channel?.isVoiceBased()) {
             try {
