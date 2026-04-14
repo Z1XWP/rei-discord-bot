@@ -9,14 +9,10 @@ import {
     VoiceBasedChannel
 } from 'discord.js';
 import { CreatedRoomData } from './types';
-import {
-    getTriggerChannelId,
-    setTriggerChannelId,
-    loadRooms,
-    saveRoom,
-    deleteRoom,
-    getExceptionRoles
-} from './db';
+import { getTriggerChannelId, setTriggerChannelId } from './controllers/guild-controller';
+import { loadRooms, saveRoom, deleteRoom } from './controllers/rooms-controller';
+import { getExceptionRoles } from './controllers/roles-controller';
+
 
 export class RoomBot {
     private readonly client: Client;

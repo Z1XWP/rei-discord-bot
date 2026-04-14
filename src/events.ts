@@ -17,7 +17,7 @@ async function onReady(bot: RoomBot): Promise<void> {
     const client = bot.getClient();
     console.log(`✅ Бот ${client.user?.tag} запущен!`);
 
-    // Загружаем данные для каждой гильдии, где есть бот
+    // Загружаем данные для каждого сервера, где есть бот
     for (const guild of client.guilds.cache.values()) {
         await bot.loadGuildData(guild.id);
         await bot.restoreCreatedRooms(guild.id);
@@ -40,7 +40,7 @@ async function onReady(bot: RoomBot): Promise<void> {
         }
     }
 
-    // Регистрируем глобальные команды
+    // Регистрируем команды
     await registerCommands();
 }
 
