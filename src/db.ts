@@ -6,11 +6,11 @@ let pool: Pool | null = null;
 function getPool(): Pool {
     if (!pool) {
         pool = new Pool({
-            host: process.env.DB_HOST || 'localhost',
-            port: parseInt(process.env.DB_PORT || '5432'),
+            host: process.env.DB_HOST,
+            port: parseInt(process.env.DB_PORT || 'null'),
             user: process.env.DB_USER,
             password: process.env.DB_PASSWORD,
-            database: process.env.DB_NAME || 'rei_data',
+            database: process.env.DB_NAME,
         });
     }
     return pool;
